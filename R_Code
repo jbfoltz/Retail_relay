@@ -1,0 +1,258 @@
+library(readxl)
+relaytrain_exp <- read_excel("Desktop/relaytrain_exp.xlsx", 
+                               +     col_types = c("text", "numeric", "date", 
+                                                   +         "date", "date", "numeric", "numeric", 
+                                                   +         "numeric", "numeric", "numeric", 
+                                                   +         "numeric", "numeric", "numeric", 
+                                                   +         "numeric", "numeric", "numeric", 
+                                                   +         "numeric", "numeric", "numeric", 
+                                                   +         "numeric", "numeric", "numeric", 
+                                                   +         "text", "text"))
+relaytest_exp <- read_excel("Desktop/relaytest_exp.xlsx", 
+                            +     col_types = c("text", "numeric", "date", 
+                                                +         "date", "date", "numeric", "numeric", 
+                                                +         "numeric", "numeric", "numeric", 
+                                                +         "numeric", "numeric", "numeric", 
+                                                +         "numeric", "numeric", "numeric", 
+                                                +         "numeric", "numeric", "numeric", 
+                                                +         "numeric", "numeric", "numeric", 
+                                                +         "text", "text"))
+library(caret)
+install.packages("DataExplorer")
+library(DataExplorer)
+install.packages("corrplot")
+library(corrplot)
+library(Hmisc)
+
+trainData <- relaytrain_exp
+testData <- relaytest_exp
+
+trainData <- trainData[,-c(1)]
+testData <- testData[,-c(1)]
+str(trainData)
+#Check for NAs:
+colSums(is.na(testData))
+
+
+plot_str(trainData)
+introduce(trainData)
+plot_intro(trainData)
+plot_missing(trainData)
+plot_bar(trainData)
+plot_histogram(trainData)
+plot_correlation(na.omit(relaytrain_exp), maxcat = 5L)  
+
+#### Modeling
+trainData$retained <- as.factor(trainData$retained) 
+testData$retained <- as.factor(testData$retained) 
+
+#### Logit w/Caret
+glm_mod = train(
+  form = retained ~ .,
+  data = trainData,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial")
+glm_mod$results
+summary(glm_mod)
+
+##Selected values
+glm_mod = train(
+  form = retained ~ esent + eopenrate + eopen_num +
+    within_6mos + city + clicks_per_order +
+    eclickrate + avgorder + orders + refill + doorstep +favday,
+  data = trainData,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial")
+glm_mod$results 
+summary(glm_mod)
+
+logit_predict_train <- predict(glm_mod, newdata = trainData, type = "raw")
+table(trainData$retained,logit_predict_train) 
+confusionMatrix(table(trainData$retained,logit_predict_train),positive = "1")
+
+logit_predict_test <- predict(glm_mod, newdata = testData, type = "raw")  
+table(testData$retained,logit_predict_test) 
+confusionMatrix(table(testData$retained,logit_predict_test),positive = "1")
+## Accuracy of 0.946
+
+
+
+#### R Part
+library(rpart)
+library(rattle)
+start.time <- Sys.time()
+dt_model1 <- train(form = retained ~ .,
+                   data = trainData, 
+                   trControl = trainControl(method = "cv", number = 5),
+                   method = "rpart", 
+                   control = rpart.control(cp = 0.0))
+Sys.time() - start.time
+
+print(dt_model1)
+print(dt_model1$finalModel)
+fancyRpartPlot(dt_model1$finalModel)
+
+rpart_predict_test <- predict(dt_model1, newdata = testData, type = "raw")  
+table(testData$retained,rpart_predict_test) 
+confusionMatrix(table(testData$retained,rpart_predict_test))
+## Accuracy of 0.964
+
+#### Naive Bayes 
+start.time <- Sys.time()
+nb_model <- train(form = retained ~ .,
+                   data = trainData, 
+                   trControl = trainControl(method = "cv", number = 5),
+                   method = "nb")
+Sys.time() - start.time
+ 
+nb_predict_train <- predict(nb_model, newdata = trainData, type = "raw")
+table(trainData$retained,nb_predict_train)
+confusionMatrix(table(trainData$retained,nb_predict_train))
+
+nb_predict_test <- predict(nb_model, newdata = testData, type = "raw")  
+table(testData$retained,nb_predict_test) 
+confusionMatrix(table(testData$retained,nb_predict_test))
+## Accuracy of 0.8969
+
+#### Random Forest
+mtry <- sqrt(ncol(trainData)) 
+tunegrid <- expand.grid(.mtry=mtry)
+control <- trainControl(method='repeatedcv',
+                        number = 10,
+                        repeats = 3)
+
+start.time <- Sys.time()
+rf_model <- train(form = retained ~ .,
+                  data = trainData,  
+                  method = "rf",
+                  trControl=control,
+                  tuneGrid =tunegrid)
+Sys.time() - start.time
+
+rf_predict_train <- predict(rf_model, newdata = trainData, type = "raw")
+table(trainData$retained,rf_predict_train)
+confusionMatrix(table(trainData$retained,rf_predict_train))
+
+rf_predict_test <- predict(rf_model, newdata = testData, type = "raw")  
+table(testData$retained,rf_predict_test) 
+confusionMatrix(table(testData$retained,rf_predict_test))
+varImp(rf_model)
+## Accuracy of 0.9683
+
+install.packages("pdp")
+library(pdp)
+partial(rf_model, pred.var = "esent", plot = TRUE, type = "classification", prob=TRUE)
+
+#### LogitBoost
+start.time <- Sys.time()
+lb_model <- train(form = retained ~ .,
+                  data = trainData,  
+                  method = "LogitBoost",
+                  trControl=control,
+                  tunelength=10)
+Sys.time() - start.time
+
+lb_predict_train <- predict(lb_model, newdata = trainData, type = "raw")
+table(trainData$retained,lb_predict_train)
+confusionMatrix(table(trainData$retained,lb_predict_train))
+
+lb_predict_test <- predict(lb_model, newdata = testData, type = "raw")  
+table(testData$retained,lb_predict_test) 
+confusionMatrix(table(testData$retained,lb_predict_test))
+varImp(lb_model)
+## Accuracy of 0.9652
+
+#### Gradiant Boosting Tree
+xgb_grid_1 = expand.grid(
+  nrounds = 2, 
+  max_depth = c(5, 10, 15), 
+  eta = c(0.01, 0.001, 0.0001), 
+  gamma = c(1, 2, 3), 
+  colsample_bytree = c(0.4, 0.7, 1.0), 
+  min_child_weight = c(0.5, 1, 1.5))
+
+xgb_trcontrol_1 = trainControl(
+  method = "cv",
+  number = 3,  
+  allowParallel = TRUE)
+
+start.time <- Sys.time()
+xgb_model <- train(form = retained ~ .,
+                  data = trainData,  
+                  trControl = xgb_trcontrol_1,
+                  tunelength = 2,
+                  method = "xgbTree")
+Sys.time() - start.time
+
+xgb_predict_train <- predict(xgb_model, newdata = trainData, type = "raw")
+table(trainData$retained,xgb_predict_train)
+confusionMatrix(table(trainData$retained,xgb_predict_train))
+
+xgb_predict_test <- predict(xgb_model, newdata = testData, type = "raw")  
+table(testData$retained,xgb_predict_test) 
+confusionMatrix(table(testData$retained,xgb_predict_test))
+varImp(xgb_model)
+summary(xgb_model)
+xgb_model
+
+partial(xgb_model, pred.var = "esent", plot = TRUE, type = "classification", prob=TRUE)
+partial(xgb_model, pred.var = "ordfreq", plot = TRUE, type = "classification", prob=TRUE)
+## Accuracy of 0.9684
+
+
+
+
+
+
+
+
+
+
+
+#### Checking within6mos
+trainData2 <- relaytrain_exp
+testData2 <- relaytest_exp
+trainData2 <- trainData2[,-c(1)]
+testData2 <- testData2[,-c(1)]
+
+trainData2$within_6mos <- as.factor(trainData2$within_6mos) 
+testData2$within_6mos <- as.factor(testData2$within_6mos) 
+
+glm_mod = train(
+  form = within_6mos ~ esent + eopenrate + eopenrate + eopen_num +
+      city + clicks_per_order +
+    eclickrate + avgorder + orders + refill + doorstep +favday,
+  data = trainData2,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial")
+glm_mod$results
+summary(glm_mod)
+
+logit_predict_train <- predict(glm_mod, newdata = trainData, type = "raw")
+table(trainData$retained,logit_predict_train) 
+
+logit_predict_test <- predict(glm_mod, newdata = testData, type = "raw")  
+table(testData$retained,logit_predict_test) 
+confusionMatrix(table(testData$retained,logit_predict_test))
+
+##Simple Logit
+glm_mod_simp = train(
+  form = retained ~ esent,
+  data = trainData,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial")
+glm_mod$results 
+summary(glm_mod_simp)
+
+glm_mod_simp_predict_train <- predict(glm_mod_simp, newdata = trainData, type = "raw")
+table(trainData$retained,glm_mod_simp_predict_train) 
+confusionMatrix(table(trainData$retained,glm_mod_simp_predict_train),positive = "1")
+
+glm_mod_predict_test <- predict(glm_mod_simp, newdata = testData, type = "raw")  
+table(testData$retained,glm_mod_predict_test) 
+confusionMatrix(table(testData$retained,glm_mod_predict_test),positive = "1")
+
